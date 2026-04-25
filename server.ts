@@ -196,7 +196,7 @@ async function startServer() {
     res.json(newTransaction);
   });
 
-  // Metas Financeiras
+  // Metas Financeiras (Roadmap)
   app.get("/api/finance/goals", (req, res) => {
     const revenue = financeData.transactions
       .filter((t: any) => t.type === 'income')
@@ -212,14 +212,28 @@ async function startServer() {
       const needed = goal.target;
       const allocated = Math.min(totalAvailable, needed);
       totalAvailable -= allocated;
-      return { ...goal, current: allocated };
+      
+      // Auto-status logic: if target reached, status is 'done'
+      let status = goal.status || 'todo';
+      if (allocated >= needed) {
+        status = 'done';
+      } else if (allocated > 0 && status === 'todo') {
+        status = 'doing';
+      }
+
+      return { ...goal, current: allocated, status };
     });
 
     res.json(calculatedGoals);
   });
 
   app.post("/api/finance/goals", (req, res) => {
-    const newGoal = { id: (Date.now() + Math.random()).toString(), current: 0, ...req.body };
+    const newGoal = { 
+      id: (Date.now() + Math.random()).toString(), 
+      current: 0, 
+      status: 'todo', 
+      ...req.body 
+    };
     financeData.goals.push(newGoal);
     saveData(financeData);
     res.json(newGoal);
@@ -229,6 +243,7 @@ async function startServer() {
     const { id } = req.params;
     const index = financeData.goals.findIndex((g: any) => g.id === id);
     if (index !== -1) {
+      // Allow manual status if provided, otherwise it will be auto-calculated in GET
       financeData.goals[index] = { ...financeData.goals[index], ...req.body };
       saveData(financeData);
       res.json(financeData.goals[index]);

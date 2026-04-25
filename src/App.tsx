@@ -10,6 +10,8 @@ import {
   BarChart3, 
   Clock,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   Plus,
   Sparkles,
   Search,
@@ -59,6 +61,7 @@ interface Goal {
   category: string;
   subtasks: SubTask[];
   completed: boolean;
+  status: 'todo' | 'doing' | 'done';
 }
 
 interface Task {
@@ -69,6 +72,9 @@ interface Task {
   completed: boolean;
   category: string;
   day: number;
+  deadline?: string;
+  subtasks?: SubTask[];
+  status?: 'todo' | 'doing' | 'done';
 }
 
 interface UserStats {
@@ -92,6 +98,7 @@ const INITIAL_GOALS: Goal[] = [
     deadline: '2024-12-15',
     category: 'Produto',
     completed: false,
+    status: 'doing',
     subtasks: [
       { id: 's1', title: 'Refatoração da Engine IA', completed: true },
       { id: 's2', title: 'Beta Test com 100 usuários', completed: false },
@@ -137,6 +144,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isResetCareerModalOpen, setIsResetCareerModalOpen] = useState(false);
   const [financeSummary, setFinanceSummary] = useState({ balance: 0, revenue: 0, expenses: 0, profit: 0, savedAmount: 0, savingsPercentage: 0 });
   const [financeTransactions, setFinanceTransactions] = useState<any[]>([]);
   const [financeGoals, setFinanceGoals] = useState<Goal[]>([]);
@@ -211,6 +219,21 @@ export default function App() {
 
   const handleResetFinance = async () => {
     setIsResetModalOpen(true);
+  };
+
+  const handleResetCareer = () => {
+    setIsResetCareerModalOpen(true);
+  };
+
+  const confirmResetCareer = () => {
+    setTasks(INITIAL_TASKS);
+    setGoals(INITIAL_GOALS);
+    setStats({ xp: 0, level: 1, totalCompleted: 0 });
+    localStorage.removeItem('syncro_tasks');
+    localStorage.removeItem('syncro_goals');
+    localStorage.removeItem('syncro_stats');
+    setIsResetCareerModalOpen(false);
+    notify("🔥 Carreira reiniciada do zero");
   };
 
   const confirmResetFinance = async () => {
@@ -400,14 +423,40 @@ export default function App() {
           };
         });
 
-        return { ...t, completed: isCompleting };
+        return { ...t, completed: isCompleting, status: isCompleting ? 'done' : 'todo' };
       }
       return t;
     }));
   };
 
   const handleDeleteTask = (id: string) => {
-    setTasks(prev => prev.filter(t => t.id !== id));
+    setTasks(prev => {
+      const taskToDelete = prev.find(t => t.id === id);
+      if (taskToDelete && taskToDelete.completed) {
+        const gained = XP_MAP[taskToDelete.energyRequired as keyof typeof XP_MAP] || 15;
+        setStats(prevStats => {
+          let newXp = prevStats.xp - gained;
+          let newLevel = prevStats.level;
+          let totalComp = prevStats.totalCompleted - 1;
+
+          while (newXp < 0 && newLevel > 1) {
+            newLevel -= 1;
+            newXp += getRequiredXP(newLevel);
+          }
+
+          if (newXp < 0) newXp = 0;
+
+          return {
+            ...prevStats,
+            xp: newXp,
+            level: newLevel,
+            totalCompleted: Math.max(0, totalComp)
+          };
+        });
+        notify(`-${gained} XP: Objetivo removido`);
+      }
+      return prev.filter(t => t.id !== id);
+    });
   };
 
   const handleAddTask = (task: Task) => {
@@ -475,9 +524,59 @@ export default function App() {
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} key="roadmap">
                 <RoadmapView 
                   achievements={achievements} 
-                  goals={goals} 
-                  onUpdateGoal={(updatedGoal: Goal) => setGoals(prev => prev.map(g => g.id === updatedGoal.id ? updatedGoal : g))}
-                  onDeleteGoal={(id: string) => setGoals(prev => prev.filter(g => g.id !== id))}
+                  goals={[
+                    ...goals,
+                    ...tasks.filter(t => t.category?.toLowerCase().includes('estratégico') || t.category?.toLowerCase().includes('estratégia')).map(t => ({
+                      id: t.id,
+                      title: t.title,
+                      deadline: t.deadline || 'S/ Prazo',
+                      category: t.category,
+                      subtasks: t.subtasks || [],
+                      completed: t.completed,
+                      status: t.status || (t.completed ? 'done' : 'todo'),
+                      isTask: true
+                    } as any))
+                  ]} 
+                  onUpdateGoal={(updatedGoal: any) => {
+                    if (updatedGoal.isTask) {
+                      setTasks(prev => prev.map(t => t.id === updatedGoal.id ? { 
+                        ...t, 
+                        title: updatedGoal.title, 
+                        completed: updatedGoal.completed,
+                        status: updatedGoal.status,
+                        subtasks: updatedGoal.subtasks
+                      } : t));
+                    } else {
+                      setGoals(prev => prev.map(g => g.id === updatedGoal.id ? updatedGoal : g));
+                    }
+                  }}
+                  onDeleteGoal={(id: string) => {
+                    const taskToDelete = tasks.find(t => t.id === id);
+                    if (taskToDelete && taskToDelete.completed) {
+                      const gained = XP_MAP[taskToDelete.energyRequired as keyof typeof XP_MAP] || 15;
+                      setStats(prevStats => {
+                        let newXp = prevStats.xp - gained;
+                        let newLevel = prevStats.level;
+                        let totalComp = prevStats.totalCompleted - 1;
+
+                        while (newXp < 0 && newLevel > 1) {
+                          newLevel -= 1;
+                          newXp += getRequiredXP(newLevel);
+                        }
+
+                        if (newXp < 0) newXp = 0;
+
+                        return {
+                          ...prevStats,
+                          xp: newXp,
+                          level: newLevel,
+                          totalCompleted: Math.max(0, totalComp)
+                        };
+                      });
+                    }
+                    setGoals(prev => prev.filter(g => g.id !== id));
+                    setTasks(prev => prev.filter(t => t.id !== id));
+                  }}
                   onAddGoal={(goal: Goal) => { setGoals(prev => [...prev, goal]); notify("🚩 Meta estratégica definida"); }}
                 />
               </motion.div>
@@ -526,6 +625,7 @@ export default function App() {
                 <SettingsView 
                   stats={stats} 
                   financeSettings={{ savingsPercentage: financeSummary.savingsPercentage }}
+                  onResetCareer={handleResetCareer}
                   onUpdateFinanceSettings={async (newSettings: any) => {
                     await fetch('/api/finance/settings', {
                       method: 'POST',
@@ -551,6 +651,22 @@ export default function App() {
       <TimerOverlay 
         timer={activeTimer} 
         onClose={() => setActiveTimer(null)} 
+      />
+
+      <ResetVerificationModal 
+        isOpen={isResetModalOpen} 
+        onClose={() => setIsResetModalOpen(false)} 
+        onConfirm={confirmResetFinance} 
+        phrase="Quero reiniciar o modo financeiro"
+      />
+
+      <ResetVerificationModal 
+        isOpen={isResetCareerModalOpen} 
+        onClose={() => setIsResetCareerModalOpen(false)} 
+        onConfirm={confirmResetCareer} 
+        phrase="Reiniciar minha carreira agora"
+        dangerTitle="Reset de Carreira"
+        dangerDesc="Esta ação é IRREVERSÍVEL. Seu nível, XP e todos os objetivos estratégicos serão apagados."
       />
     </div>
   );
@@ -727,10 +843,19 @@ function DashboardView({ energy, tasks, stats, achievements, onToggle, onDelete,
           
           <div className="space-y-3">
             <AnimatePresence mode="popLayout">
-              {tasks.map((task: any, idx: number) => (
+              {tasks.filter((t: any) => !t.completed).map((task: any, idx: number) => (
                 <TaskItem key={task.id} task={task} idx={idx} onToggle={onToggle} onDelete={onDelete} />
               ))}
             </AnimatePresence>
+            
+            {tasks.some((t: any) => t.completed) && (
+              <div className="pt-8 space-y-3 border-t border-slate-900/50 mt-10">
+                <span className="text-[10px] font-bold text-slate-700 uppercase tracking-widest px-2 block mb-4">Finalizadas</span>
+                {tasks.filter((t: any) => t.completed).map((task: any, idx: number) => (
+                  <TaskItem key={task.id} task={task} idx={idx} onToggle={onToggle} onDelete={onDelete} />
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -915,14 +1040,35 @@ function RoadmapView({ achievements, goals, onUpdateGoal, onDeleteGoal, onAddGoa
   onAddGoal: (g: Goal) => void;
 }) {
   const [isAddingGoal, setIsAddingGoal] = useState(false);
+  const [isDoneExpanded, setIsDoneExpanded] = useState(false);
 
   const toggleSubtask = (goal: Goal, subtaskId: string) => {
     const updatedSubtasks = goal.subtasks.map(s => 
       s.id === subtaskId ? { ...s, completed: !s.completed } : s
     );
     const allCompleted = updatedSubtasks.every(s => s.completed);
-    onUpdateGoal({ ...goal, subtasks: updatedSubtasks, completed: allCompleted });
+    
+    // If all completed, move to done status automatically
+    let newStatus = goal.status;
+    if (allCompleted) {
+      newStatus = 'done';
+    } else if (updatedSubtasks.some(s => s.completed) && goal.status === 'todo') {
+      newStatus = 'doing';
+    }
+
+    onUpdateGoal({ 
+      ...goal, 
+      subtasks: updatedSubtasks, 
+      completed: allCompleted,
+      status: newStatus 
+    });
   };
+
+  const columns = [
+    { id: 'todo', label: 'Planejamento', color: 'text-slate-400' },
+    { id: 'doing', label: 'Execução', color: 'text-amber-500' },
+    { id: 'done', label: 'Concluído', color: 'text-emerald-500' }
+  ];
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-16 pb-20">
@@ -945,81 +1091,145 @@ function RoadmapView({ achievements, goals, onUpdateGoal, onDeleteGoal, onAddGoa
           <h3 className="text-lg font-bold text-white uppercase tracking-tighter">Roadmap Estratégico</h3>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {goals.map((goal) => {
-            const completedCount = goal.subtasks.filter(s => s.completed).length;
-            const progress = (completedCount / goal.subtasks.length) * 100;
-
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          {columns.map(col => {
+            const columnGoals = goals.filter(g => (g.status || 'todo') === col.id);
+            const isDoneCol = col.id === 'done';
+            
             return (
-              <motion.div 
-                key={goal.id}
-                layout
-                className={`bg-[#0D0D0D] border rounded-[32px] p-8 space-y-6 relative group transition-all ${goal.completed ? 'border-emerald-500/40' : 'border-[#1E293B] hover:border-slate-700'}`}
-              >
-                <button 
-                  onClick={() => onDeleteGoal(goal.id)}
-                  className="absolute top-8 right-8 opacity-0 group-hover:opacity-100 text-slate-700 hover:text-red-500 transition-all"
+              <div key={col.id} className="space-y-6">
+                <div 
+                  className={`flex items-center justify-between px-2 ${isDoneCol ? 'cursor-pointer hover:opacity-80 transition-all' : ''}`}
+                  onClick={() => isDoneCol && setIsDoneExpanded(!isDoneExpanded)}
                 >
-                  <Trash2 size={16} />
-                </button>
-
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest bg-emerald-500/5 px-2 py-1 rounded border border-emerald-500/10">
-                      {goal.category}
-                    </span>
-                    <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1 uppercase">
-                      <Calendar size={12} /> {goal.deadline}
-                    </span>
-                  </div>
-                  <h4 className={`text-2xl font-bold tracking-tight ${goal.completed ? 'text-emerald-400' : 'text-white'}`}>
-                    {goal.title}
+                  <h4 className={`text-xs font-bold uppercase tracking-[0.2em] ${col.color} flex items-center gap-2`}>
+                    {col.label}
+                    {isDoneCol && (isDoneExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
                   </h4>
+                  <span className="text-[10px] font-mono text-slate-800 bg-slate-900/50 px-2 py-0.5 rounded-full">
+                    {columnGoals.length}
+                  </span>
                 </div>
 
-                <div className="space-y-2">
-                  <div className="flex justify-between text-[10px] font-bold uppercase tracking-tighter">
-                    <span className="text-slate-500">Progresso</span>
-                    <span className="text-emerald-500 font-mono">{Math.round(progress)}%</span>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-900">
+                <div className="space-y-4">
+                  {isDoneCol && !isDoneExpanded && columnGoals.length > 0 ? (
                     <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${progress}%` }}
-                      className={`h-full ${goal.completed ? 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]' : 'bg-emerald-600'}`}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-3 pt-4 border-t border-slate-900">
-                  <span className="text-[9px] font-bold text-slate-600 uppercase tracking-widest block mb-2">Milestones</span>
-                  {goal.subtasks.map((sub) => (
-                    <div 
-                      key={sub.id} 
-                      onClick={() => toggleSubtask(goal, sub.id)}
-                      className="flex items-center gap-3 cursor-pointer group/sub"
+                      layout
+                      onClick={() => setIsDoneExpanded(true)}
+                      className="p-10 border border-dashed border-emerald-500/20 rounded-[32px] flex flex-col items-center justify-center cursor-pointer hover:bg-emerald-500/5 transition-all group"
                     >
-                      <div className={`w-4 h-4 rounded border transition-all flex items-center justify-center shrink-0 ${sub.completed ? 'bg-emerald-500 border-emerald-500' : 'border-slate-800 group-hover/sub:border-emerald-500/50'}`}>
-                        {sub.completed && <CheckCircle2 size={10} className="text-slate-950" />}
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-500 mb-4 group-hover:scale-110 transition-transform">
+                        <CheckCircle2 size={24} />
                       </div>
-                      <span className={`text-xs ${sub.completed ? 'text-slate-600 line-through' : 'text-slate-400 group-hover/sub:text-slate-200'}`}>
-                        {sub.title}
-                      </span>
+                      <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-[0.2em]">{columnGoals.length} Metas Concluídas</p>
+                      <span className="text-[8px] text-slate-600 uppercase mt-2">Clique para ver detalhes</span>
+                    </motion.div>
+                  ) : (
+                    <>
+                      {columnGoals.map((goal) => {
+                        const completedCount = goal.subtasks.filter(s => s.completed).length;
+                        const progress = goal.subtasks.length > 0 ? (completedCount / goal.subtasks.length) * 100 : (goal.completed ? 100 : 0);
+
+                        return (
+                          <motion.div 
+                            key={goal.id}
+                            layout
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className={`bg-[#0D0D0D] border rounded-[32px] p-6 space-y-5 relative group transition-all ${col.id === 'done' ? 'border-emerald-500/20 opacity-70' : 'border-[#1E293B] hover:border-slate-700'}`}
+                          >
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); onDeleteGoal(goal.id); }}
+                              className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 text-slate-700 hover:text-red-500 transition-all"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-3">
+                                <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/10">
+                                  {goal.category}
+                                </span>
+                              </div>
+                              <h4 className={`text-lg font-bold tracking-tight leading-tight ${col.id === 'done' ? 'text-emerald-500/60' : 'text-white'}`}>
+                                {goal.title}
+                              </h4>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-[9px] font-bold uppercase tracking-tighter">
+                                <span className="text-slate-600">Progresso</span>
+                                <span className={`${col.id === 'done' ? 'text-emerald-500' : 'text-emerald-500/60'} font-mono`}>{Math.round(progress)}%</span>
+                              </div>
+                              <div className="h-1 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-900">
+                                <motion.div 
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${progress}%` }}
+                                  className={`h-full ${col.id === 'done' ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.3)]' : 'bg-emerald-600'}`}
+                                />
+                              </div>
+                            </div>
+
+                            {goal.subtasks.length > 0 && (
+                              <div className="space-y-2 pt-4 border-t border-slate-900">
+                                {goal.subtasks.map((sub) => (
+                                  <div 
+                                    key={sub.id} 
+                                    onClick={() => toggleSubtask(goal, sub.id)}
+                                    className="flex items-center gap-2 cursor-pointer group/sub"
+                                  >
+                                    <div className={`w-3.5 h-3.5 rounded border transition-all flex items-center justify-center shrink-0 ${sub.completed ? 'bg-emerald-500 border-emerald-500' : 'border-slate-800 group-hover/sub:border-emerald-500/50'}`}>
+                                      {sub.completed && <CheckCircle2 size={8} className="text-slate-950" />}
+                                    </div>
+                                    <span className={`text-[11px] ${sub.completed ? 'text-slate-700 line-through' : 'text-slate-500 group-hover/sub:text-slate-300'}`}>
+                                      {sub.title}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            <div className="flex gap-2 pt-2 overflow-x-auto pb-1 scrollbar-hide">
+                               {col.id !== 'todo' && (
+                                 <button 
+                                  onClick={() => onUpdateGoal({...goal, status: 'todo'})}
+                                  className="text-[8px] font-bold uppercase tracking-widest text-slate-600 hover:text-slate-400"
+                                 >
+                                   Recuar
+                                 </button>
+                               )}
+                               {col.id === 'todo' && (
+                                 <button 
+                                  onClick={() => onUpdateGoal({...goal, status: 'doing'})}
+                                  className="text-[8px] font-bold uppercase tracking-widest text-amber-500 transition-all hover:brightness-125"
+                                 >
+                                   Começar
+                                 </button>
+                               )}
+                               {col.id === 'doing' && (
+                                 <button 
+                                  onClick={() => onUpdateGoal({...goal, status: 'done', completed: true})}
+                                  className="text-[8px] font-bold uppercase tracking-widest text-emerald-500 transition-all hover:brightness-125"
+                                 >
+                                   Concluir
+                                 </button>
+                               )}
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </>
+                  )}
+
+                  {columnGoals.length === 0 && (
+                    <div className="py-12 bg-slate-950/20 rounded-[32px] border border-dashed border-slate-900 flex flex-col items-center justify-center">
+                      <p className="text-[10px] text-slate-700 uppercase tracking-widest font-bold">Vazio</p>
                     </div>
-                  ))}
+                  )}
                 </div>
-              </motion.div>
+              </div>
             );
           })}
-
-          {goals.length === 0 && (
-            <div className="col-span-2 py-20 bg-slate-950/50 rounded-[32px] border border-dashed border-slate-900 flex flex-col items-center justify-center space-y-4">
-              <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-slate-700">
-                <Target size={24} />
-              </div>
-              <p className="text-slate-600 font-medium italic">Nenhuma meta estratégica definida para o roadmap.</p>
-            </div>
-          )}
         </div>
       </section>
 
@@ -1083,7 +1293,8 @@ function AddGoalModal({ isOpen, onClose, onAdd }: any) {
       category,
       deadline,
       subtasks: finalSubtasks,
-      completed: false
+      completed: false,
+      status: 'todo'
     });
     onClose();
     setTitle('');
@@ -1195,6 +1406,7 @@ function AddTaskModal({ isOpen, onClose, onAdd }: any) {
   const [title, setTitle] = useState('');
   const [energy, setEnergy] = useState<'High' | 'Medium' | 'Low'>('Medium');
   const [day, setDay] = useState(0);
+  const [isStrategic, setIsStrategic] = useState(false);
 
   if (!isOpen) return null;
 
@@ -1215,6 +1427,22 @@ function AddTaskModal({ isOpen, onClose, onAdd }: any) {
               value={title}
               onChange={e => setTitle(e.target.value)}
             />
+          </div>
+
+          <div className="flex items-center justify-between p-4 bg-slate-950/50 rounded-2xl border border-slate-900">
+            <div className="flex items-center gap-3">
+              <Target size={16} className={isStrategic ? 'text-emerald-500' : 'text-slate-700'} />
+              <div>
+                <p className="text-[10px] font-bold text-white uppercase tracking-tighter">Impacto Estratégico</p>
+                <p className="text-[9px] text-slate-500 uppercase font-mono">Sincronizar com o Roadmap</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setIsStrategic(!isStrategic)}
+              className={`w-10 h-5 rounded-full relative transition-all ${isStrategic ? 'bg-emerald-500' : 'bg-slate-800'}`}
+            >
+              <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${isStrategic ? 'left-6' : 'left-1'}`} />
+            </button>
           </div>
 
           <div className="space-y-2">
@@ -1246,7 +1474,17 @@ function AddTaskModal({ isOpen, onClose, onAdd }: any) {
         <button 
           onClick={() => {
             if (!title) return;
-            onAdd({ id: (Date.now() + Math.random()).toString(), title, energyRequired: energy, duration: 45, completed: false, category: 'Estratégico', day });
+            onAdd({ 
+              id: (Date.now() + Math.random()).toString(), 
+              title, 
+              energyRequired: energy, 
+              duration: 45, 
+              completed: false, 
+              category: isStrategic ? 'Estratégico' : 'Operacional', 
+              day,
+              status: 'todo'
+            });
+            setIsStrategic(false);
           }}
           className="w-full bg-white text-slate-950 py-5 rounded-[22px] font-bold uppercase text-[10px] tracking-widest hover:bg-emerald-500 transition-all shadow-2xl active:scale-[0.98]"
         >
@@ -1565,12 +1803,12 @@ function FinanceView({
             </div>
             <div className="space-y-6">
               {goals && goals.length > 0 ? (
-                goals.map((goal: any) => {
+                goals.filter((g: any) => g.status !== 'done').map((goal: any) => {
                   const progress = (goal.current / goal.target) * 100;
                   return (
                     <div key={goal.id} className="space-y-2">
                       <div className="flex justify-between items-end">
-                        <span className="text-[11px] font-bold text-white">{goal.title}</span>
+                        <span className="text-[11px] font-bold text-white uppercase tracking-tighter">{goal.title}</span>
                         <span className="text-[9px] font-mono text-slate-500">R$ {goal.current.toLocaleString()} / {goal.target.toLocaleString()}</span>
                       </div>
                       <div className="h-1.5 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-900">
@@ -1584,7 +1822,12 @@ function FinanceView({
                   );
                 })
               ) : (
-                <p className="text-[10px] text-slate-600 italic">Nenhuma meta de roadmap definida.</p>
+                <p className="text-[10px] text-slate-600 italic">Nenhuma meta de roadmap ativa.</p>
+              )}
+              {goals && goals.some((g: any) => g.status === 'done') && (
+                <p className="text-[9px] text-emerald-500/50 uppercase tracking-widest text-center pt-2">
+                  + {goals.filter((g: any) => g.status === 'done').length} Metas Concluídas
+                </p>
               )}
             </div>
           </div>
@@ -1688,7 +1931,6 @@ function FinanceView({
           onFetchData();
         }}
       />
-      <ResetVerificationModal isOpen={isResetModalOpen} onClose={() => setIsResetModalOpen(false)} onConfirm={onConfirmReset} />
     </motion.div>
   );
 }
@@ -1995,9 +2237,8 @@ function ManageBusinessGoalsModal({ isOpen, onClose, businessGoals, onAdd, onUpd
   );
 }
 
-function ResetVerificationModal({ isOpen, onClose, onConfirm }: any) {
+function ResetVerificationModal({ isOpen, onClose, onConfirm, phrase: TARGET_PHRASE = "Confirmar", dangerTitle = "Confirmação de Segurança", dangerDesc = "Esta ação é irreversível." }: any) {
   const [phrase, setPhrase] = useState('');
-  const TARGET_PHRASE = "Quero reiniciar o modo financeiro";
 
   if (!isOpen) return null;
 
@@ -2016,8 +2257,8 @@ function ResetVerificationModal({ isOpen, onClose, onConfirm }: any) {
         </button>
         
         <div className="space-y-2">
-          <h4 className="text-xl font-bold text-white tracking-tighter">Confirmação de Segurança</h4>
-          <p className="text-xs text-slate-500 leading-relaxed italic">Esta ação é irreversível. Todos os dados financeiros serão permanentemente apagados.</p>
+          <h4 className="text-xl font-bold text-white tracking-tighter">{dangerTitle}</h4>
+          <p className="text-xs text-slate-500 leading-relaxed italic">{dangerDesc}</p>
         </div>
 
         <div className="space-y-4">
@@ -2025,7 +2266,7 @@ function ResetVerificationModal({ isOpen, onClose, onConfirm }: any) {
             Digite: <span className="text-white select-none">{TARGET_PHRASE}</span>
           </p>
           <input 
-            placeholder="Digite a frase aqui..."
+            placeholder="Digite a phrase aqui..."
             className="w-full bg-black border border-slate-900 p-4 rounded-2xl text-white outline-none focus:border-rose-500 transition-all uppercase text-xs"
             value={phrase}
             onChange={e => setPhrase(e.target.value)}
@@ -2039,9 +2280,9 @@ function ResetVerificationModal({ isOpen, onClose, onConfirm }: any) {
             onConfirm();
             setPhrase('');
           }}
-          className={`w-full py-5 rounded-[22px] font-bold uppercase text-[10px] tracking-widest transition-all ${isCorrect ? 'bg-rose-500 text-white hover:bg-rose-600 shadow-[0_0_30px_rgba(244,63,94,0.3)]' : 'bg-slate-900 text-slate-600 cursor-not-allowed'}`}
+          className={`w-full py-5 rounded-[22px] font-bold uppercase text-[10px] tracking-widest transition-all ${isCorrect ? 'bg-rose-500 text-white shadow-[0_0_30px_rgba(244,63,94,0.3)] hover:scale-[1.02] active:scale-95' : 'bg-slate-900 text-slate-700 cursor-not-allowed'}`}
         >
-          Resetar Todo o Histórico
+          Executar Reset Irreversível
         </button>
       </motion.div>
     </div>
@@ -2363,12 +2604,21 @@ function NavItem({ icon, label, active = false, onClick, badge }: any) {
   );
 }
 
-function SettingsView({ stats, financeSettings, onUpdateFinanceSettings }: any) {
+function SettingsView({ stats, financeSettings, onUpdateFinanceSettings, onResetCareer }: any) {
   return (
     <div className="space-y-12 pb-20">
-      <header>
-        <h2 className="text-4xl font-bold text-white tracking-tighter uppercase mb-2">Painel de <span className="text-emerald-500">Configurações</span></h2>
-        <p className="text-slate-500 font-mono text-[10px] uppercase tracking-[0.2em]">Personalize sua experiência estratégica e financeira</p>
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+        <div>
+          <h2 className="text-4xl font-bold text-white tracking-tighter uppercase mb-2">Painel de <span className="text-emerald-500">Configurações</span></h2>
+          <p className="text-slate-500 font-mono text-[10px] uppercase tracking-[0.2em]">Personalize sua experiência estratégica e financeira</p>
+        </div>
+        <button 
+          onClick={onResetCareer}
+          className="flex items-center gap-2 px-6 py-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-rose-500 font-bold uppercase text-[10px] tracking-widest hover:bg-rose-500 hover:text-white transition-all active:scale-95"
+        >
+          <RotateCcw size={16} />
+          Reiniciar Carreira
+        </button>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
